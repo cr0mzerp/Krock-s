@@ -77,20 +77,20 @@ class EvolutionEngine:
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(python_code)
             
-            # 2. Modülü canlı olarak sisteme çek
-            success = self._import_skill(skill_name)
+            # 2. Modülü canlı olarak sisteme çek (safe_name kullan—skill_name değil)
+            success = self._import_skill(safe_name)
             if success:
                 # 3. SQLite veritabanına kaydet / indeksle
                 try:
                     self.indexer.memorize(
                         category="skills",
-                        key=skill_name,
+                        key=safe_name,
                         value={"code": python_code, "updated_at": os.path.getmtime(filepath)}
                     )
                 except Exception as db_err:
-                    return f"[+] Başarılı: '{skill_name}' modülü yazıldı ve sinir ağına entegre edildi. (SQLite İndeksleme Hatası: {db_err})"
+                    return f"[+] Başarılı: '{safe_name}' modülü yazıldı ve sinir ağına entegre edildi. (SQLite İndeksleme Hatası: {db_err})"
                 
-                return f"[+] Başarılı: '{skill_name}' modülü yazıldı, sinir ağına entegre edildi ve hafızaya kaydedildi."
+                return f"[+] Başarılı: '{safe_name}' modülü yazıldı, sinir ağına entegre edildi ve hafızaya kaydedildi."
             else:
                 return f"[-] Başarısız: Kod yazıldı ancak syntax/import hatası var."
         except Exception:

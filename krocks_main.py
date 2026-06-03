@@ -8,6 +8,24 @@ from typing import AsyncGenerator, Any
 from datetime import datetime
 from enum import Enum
 
+# ── .env dosyasını otomatik yükle ────────────────────────────────────────────
+def _load_dotenv(env_path: Path | None = None) -> None:
+    """Basit .env yükleyici — python-dotenv gerekmez."""
+    path = env_path or (Path(__file__).parent / ".env")
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip().strip('"').strip("'")
+        if key and key not in os.environ:  # Mevcut env değişkenlerini ezmez
+            os.environ[key] = val
+
+_load_dotenv()
+
 import httpx
 from rich.console import Console
 from rich.panel import Panel
@@ -395,9 +413,16 @@ class KrocksApexAgent:
                 task.cancel()
         if self._tts_tasks:
             await asyncio.gather(*self._tts_tasks, return_exceptions=True)
-        # SQLite bağlantılarını kapat
-        self.evolution.close()
-        self.indexer.close()
+        # SQLite bağlantılarını kapat — sadece modüller yüklüyse
+        if _MODULES_OK:
+            try:
+                self.evolution.close()
+            except Exception:
+                pass
+            try:
+                self.indexer.close()
+            except Exception:
+                pass
 
     def _push(self, role: str, content: Any) -> None:
         if (self.history
@@ -834,11 +859,23 @@ class KrocksApexAgent:
             console.print()
 
 if __name__ == "__main__":
-    agent = KrocksApexAgent(
-        voice_mode = "--voice" in sys.argv,
-        debug      = "--debug" in sys.argv,
-    )
-    try:
-        asyncio.run(agent.run())
-    except KeyboardInterrupt:
-        pass
+    if "--web" in sys.argv:
+        # Web arayüzü modunu başlat
+        from krocks_web import run_web_server
+        port = 7860
+        for i, arg in enumerate(sys.argv):
+            if arg == "--port" and i + 1 < len(sys.argv):
+                try:
+                    port = int(sys.argv[i + 1])
+                except ValueError:
+                    pass
+        run_web_server(port=port)
+    else:
+        agent = KrocksApexAgent(
+            voice_mode = "--voice" in sys.argv,
+            debug      = "--debug" in sys.argv,
+        )
+        try:
+            asyncio.run(agent.run())
+        except KeyboardInterrupt:
+            pass

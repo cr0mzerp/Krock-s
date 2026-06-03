@@ -18,3 +18,18 @@ __pycache__/
 # IDE
 .idea/
 .vscode/
+
+# Claude AI config (local machine paths)
+.claude/
+
+# Pytest cache
+.pytest_cache/
+
+# Exported conversations
+krocks_export_*.md
+
+# All SQLite databases
+*.db
+
+# Dynamically generated skills
+skills/
