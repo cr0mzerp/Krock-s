@@ -1,34 +1,34 @@
 # Krock's Apex
 
-Otonom, kendi kendini evrimleştiren macOS AI ajanı.
+An autonomous, self-evolving macOS AI agent.
 
-## Özellikler
+## Features
 
-- **Terminal TUI** — Rich tabanlı terminal arayüzü
-- **Web Arayüzü** — FastAPI ile opsiyonel web UI (`--web` flag)
-- **Ekran Görme** — Quartz ile ekran yakalama ve analiz
-- **Native macOS** — JXA, AppleScript, Cocoa/AppKit entegrasyonu
-- **Klavye Simülasyonu** — CGEvent ile donanımsal tuş vuruşları
-- **Kendini Evrimleştirme** — Yeni yetenekler öğrenip kalıcı modüller yazma
-- **Sandbox'lu Komut Çalıştırma** — Güvenlik kısıtlı shell
+- **Terminal TUI** — Rich-powered terminal interface
+- **Web UI** — Optional FastAPI web interface (`--web` flag)
+- **Screen Vision** — Screen capture and analysis via Quartz
+- **Native macOS** — JXA, AppleScript, Cocoa/AppKit integration
+- **Keystroke Simulation** — Hardware-level keystrokes via CGEvent
+- **Self-Evolution** — Learns new skills and writes persistent modules
+- **Sandboxed Execution** — Security-restricted shell commands
 
-## Kurulum
+## Installation
 
 ```bash
-# Bağımlılıkları yükle
+# Install dependencies
 pip install rich httpx fastapi uvicorn pyobjc
 
-# Ortam değişkenlerini ayarla (.env dosyasından da okur)
+# Set API key (also reads from .env file)
 export KROCKS_API_KEY="sk-or-v1-..."
 ```
 
-## Kullanım
+## Usage
 
 ```bash
-python krocks_main.py          # Terminal TUI ile
-python krocks_main.py --web    # Web arayüzü ile
+python krocks_main.py          # Terminal TUI
+python krocks_main.py --web    # Web interface
 ```
 
-## Lisans
+## License
 
 Copyright (C) 2026 Batın. All Rights Reserved.
