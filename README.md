@@ -1,4 +1,4 @@
-# Krock's Apex v6.3
+# Krock's Apex v6.3 in Beta for coding!
 
 **macOS 14+ · Apple Silicon M-series · Python 3.14+**
 
