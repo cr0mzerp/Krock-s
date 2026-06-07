@@ -1,4 +1,4 @@
-# 👨🏻‍🦯  Krock's Apex   For MaOS 👨🏻‍🦯‍➡️
+# 👨🏻‍🦯  Krock's Apex  NOT UPDATED YET!  For MaOS 👨🏻‍🦯‍➡️
 
 
 **MacOS Version 6.3** — An Ultra-Optimized, Autonomous, Self-Evolving macOS AI Agent
