@@ -44,37 +44,37 @@ Krock's Apex is not a wrapper — it's a modular, streaming, context-aware agent
 ## System Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                         Krock's Apex v6.3                             │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                       │
-│   ┌─────────────┐          ┌───────────────────┐    ┌─────────────┐  │
-│   │Terminal TUI │─────────▶│  KrocksApexAgent  │◀───│  Web UI     │  │
-│   │   (Rich)    │          │      (Core)       │    │ (FastAPI)   │  │
-│   └──────┬──────┘          └────────┬──────────┘    └──────┬──────┘  │
-│          │ Stream chunks            │ Parse actions        │ WebSocket│
-│          │                          ▼                       │ streaming│
-│          │               ┌────────────────────┐             │          │
-│          │               │   Action Parser    │             │          │
-│          │               │   & Dispatcher     │             │          │
-│          │               └─────────┬──────────┘             │          │
-│          │                         │                         │          │
-│          │         ┌───────────────┼───────────────┐         │          │
-│          │         ▼               ▼               ▼         │          │
-│          │   ┌──────────┐   ┌───────────┐   ┌──────────┐    │          │
-│          │   │Executors │   │ Evolution │   │  Memory  │    │          │
-│          │   ├──────────┤   │  Engine   │   │  (SQLite)│    │          │
-│          │   │ CMD      │   │           │   │          │    │          │
-│          │   │ JXA      │   │ [EVOLVE]  │   │OmniIndexer│   │          │
-│          │   │ TYPE     │   │ [USE]     │   │ (key-val) │   │          │
-│          │   │ MOUSE    │   └───────────┘   └──────────┘    │          │
-│          │   │ VISION   │                                    │          │
-│          │   │ WEB      │                                    │          │
-│          │   │ ASK      │                                    │          │
-│          │   └──────────┘                                    │          │
-│          └───────────────────────────────────────────────────┘          │
-│                                                                       │
-└──────────────────────────────────────────────────────────────────────┘
+  ┌────────────────────────────────────────────────────────────────────┐
+  │                       Krock's Apex v6.3                            │
+  ├────────────────────────────────────────────────────────────────────┤
+  │                                                                    │
+  │ ┌─────────────┐          ┌───────────────────┐    ┌─────────────┐  │
+  │ │Terminal TUI │─────────▶│  KrocksApexAgent  │◀───│  Web UI     │  │
+  │ │   (Rich)    │          │      (Core)       │    │ (FastAPI)   │  │
+  │ └──────┬──────┘          └────────┬──────────┘    └──────┬──────┘  │
+  │        │ Stream chunks            │ Parse actions        │WebSocket│
+  │        │                          ▼                      │streaming│
+  │        │               ┌────────────────────┐            ├─────────┤
+  │        │               │   Action Parser    │            │         │
+  │        │               │   & Dispatcher     │            │         │
+  │        │               └─────────┬──────────┘            │         │
+  │        │                         │                       │         │
+  │        │         ┌───────────────┼───────────────┐       │         │
+  │        │         ▼               ▼               ▼       │         │
+  │        │   ┌──────────┐   ┌───────────┐   ┌───────────┐  │         │
+  │        │   │Executors │   │ Evolution │   │  Memory   │  │         │
+  │        │   ├──────────┤   │  Engine   │   │  (SQLite) │  │         │
+  │        │   │ CMD      │   │           │   │           │  │         │
+  │        │   │ JXA      │   │ [EVOLVE]  │   │OmniIndexer│  │         │
+  │        │   │ TYPE     │   │ [USE]     │   │ (key-val) │  │         │
+  │        │   │ MOUSE    │   └───────────┘   └───────────┘  │         │
+  │        │   │ VISION   │                                  │         │
+  │        │   │ WEB      │                                  │         │
+  │        │   │ ASK      │                                  │         │
+  │        │   └──────────┘                                  │         │
+  │        └─────────────────────────────────────────────────┘         │
+  │                                                                    │
+  └────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -523,27 +523,27 @@ The core execution model — `KrocksApexAgent._turn(prompt, img_b64, depth)`:
 
 ```
                     ┌──────────────────┐
-                    │  User Prompt +    │
-                    │  Optional Image   │
+                    │  User Prompt +   │
+                    │  Optional Image  │
                     └────────┬─────────┘
                              │
                              ▼
                     ┌──────────────────┐
-                    │  Push to History  │
-                    │  (dedup, merge)   │
+                    │  Push to History │
+                    │  (dedup, merge)  │
                     └────────┬─────────┘
                              │
                              ▼
                     ┌──────────────────┐
-                    │  Stream via       │
-                    │  OpenRouter (SSE) │
-                    │  → Rich dashboard │
+                    │  Stream via      │
+                    │  OpenRouter (SSE)│
+                    │  → Rich dashboard│
                     └────────┬─────────┘
                              │
                              ▼
                     ┌──────────────────┐
-                    │  Parse Actions    │
-                    │  (regex extract)  │
+                    │  Parse Actions   │
+                    │  (regex extract) │
                     └────────┬─────────┘
                              │
               ┌──────────────┼──────────────┐
@@ -555,23 +555,22 @@ The core execution model — `KrocksApexAgent._turn(prompt, img_b64, depth)`:
                                          │
                                          ▼
                                 ┌──────────────────┐
-                                │  Execute Each     │
-                                │  via _execute()   │
+                                │  Execute Each    │
+                                │  via _execute()  │
                                 └────────┬─────────┘
                                          │
                                          ▼
                                 ┌──────────────────┐
-                                │  Collect Feedback │
-                                │  (dedup via ring) │
+                                │  Collect Feedback│
+                                │  (dedup via ring)│
                                 └────────┬─────────┘
                                          │
                                          ▼
                                 ┌──────────────────┐
-                                │  Depth < max?     │
-                                │  Yes → _turn(     │
-                                │    feedback,      │
-                                │    img, depth+1)  │
-                                │  No → return      │
+                                │  Depth < max?    │
+                                │  Yes → _turn(    │
+                                │    feedback,     │
+                                │  No → return     │
                                 └──────────────────┘
 ```
 
