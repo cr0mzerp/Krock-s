@@ -127,3 +127,77 @@ class UIManipulator:
             else:
                 # Düz metin kısmı
                 self._type_plain_text(part)
+
+    def hardware_mouse_action(self, action_str: str):
+        """
+        Desteklenen komutlar: click <x>,<y>, doubleclick <x>,<y>, rightclick <x>,<y>, move <x>,<y>, drag <x1>,<y1> <x2>,<y2>
+        """
+        if not self.check_accessibility_permissions():
+            return "[HATA] Erişilebilirlik izni yok!"
+            
+        parts = action_str.strip().lower().split()
+        if not parts:
+            return
+            
+        cmd = parts[0]
+        
+        def parse_coords(c):
+            try:
+                x, y = map(float, c.split(','))
+                return (x, y)
+            except:
+                return None
+                
+        if cmd in ("click", "doubleclick", "rightclick", "move") and len(parts) >= 2:
+            coords = parse_coords(parts[1])
+            if not coords: return
+            x, y = coords
+            
+            # Fareyi hareket ettir
+            event_move = Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved, (x, y), Quartz.kCGMouseButtonLeft)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_move)
+            
+            if cmd == "move":
+                return
+                
+            button = Quartz.kCGMouseButtonRight if cmd == "rightclick" else Quartz.kCGMouseButtonLeft
+            type_down = Quartz.kCGEventRightMouseDown if cmd == "rightclick" else Quartz.kCGEventLeftMouseDown
+            type_up = Quartz.kCGEventRightMouseUp if cmd == "rightclick" else Quartz.kCGEventLeftMouseUp
+            
+            clicks = 2 if cmd == "doubleclick" else 1
+            
+            for i in range(clicks):
+                event_down = Quartz.CGEventCreateMouseEvent(None, type_down, (x, y), button)
+                if clicks == 2: Quartz.CGEventSetIntegerValueField(event_down, Quartz.kCGMouseEventClickState, 2)
+                Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_down)
+                time.sleep(0.05)
+                event_up = Quartz.CGEventCreateMouseEvent(None, type_up, (x, y), button)
+                if clicks == 2: Quartz.CGEventSetIntegerValueField(event_up, Quartz.kCGMouseEventClickState, 2)
+                Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_up)
+                if i < clicks - 1:
+                    time.sleep(0.1)
+        elif cmd == "drag" and len(parts) >= 3:
+            c1 = parse_coords(parts[1])
+            c2 = parse_coords(parts[2])
+            if not c1 or not c2: return
+            x1, y1 = c1
+            x2, y2 = c2
+            
+            # Başlangıca git
+            event_move = Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved, (x1, y1), Quartz.kCGMouseButtonLeft)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_move)
+            time.sleep(0.05)
+            
+            # Mouse down
+            event_down = Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseDown, (x1, y1), Quartz.kCGMouseButtonLeft)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_down)
+            time.sleep(0.05)
+            
+            # Sürükle
+            event_drag = Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseDragged, (x2, y2), Quartz.kCGMouseButtonLeft)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_drag)
+            time.sleep(0.05)
+            
+            # Mouse up
+            event_up = Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseUp, (x2, y2), Quartz.kCGMouseButtonLeft)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_up)

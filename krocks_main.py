@@ -1,7 +1,7 @@
 # krocks_main.py
 from __future__ import annotations
 
-import sys, os, time, asyncio, json, re, readline, atexit, traceback, random
+import sys, os, time, asyncio, json, re, readline, atexit, traceback, random, base64, uuid, mimetypes, sqlite3
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import AsyncGenerator, Any
@@ -59,8 +59,8 @@ class Config:
     api_key:        str   = field(default_factory=lambda: os.getenv("KROCKS_API_KEY", ""))
     api_url:        str   = "https://openrouter.ai/api/v1/chat/completions"
     model_id:       str   = field(default_factory=lambda: os.getenv(
-                              "KROCKS_MODEL", "@preset/mimos"))
-    max_tokens:     int   = int(os.getenv("KROCKS_MAX_TOKENS", "4096"))
+                               "KROCKS_MODEL", "@preset/deepseekv4-flash"))
+    max_tokens:     int   = int(os.getenv("KROCKS_MAX_TOKENS", "16384"))
     temperature:    float = float(os.getenv("KROCKS_TEMP", "0.7"))
     history_max:    int   = 60
     retry_max:      int   = 3
@@ -69,11 +69,17 @@ class Config:
     tts_timeout:    float = 30.0     
     sessions_dir:   Path  = field(default_factory=lambda: Path.home() / ".krocks" / "sessions")
     history_file:   Path  = field(default_factory=lambda: Path.home() / ".krocks" / "cmd_history")
+    images_dir:     Path  = field(default_factory=lambda: Path.home() / ".krocks" / "images")
     debug:          bool  = False
+    enable_mouse:          bool = True
+    enable_multi_monitor:  bool = True
+    enable_file_upload:    bool = True
+    enable_vision:         bool = True
 
     def __post_init__(self) -> None:
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         self.history_file.parent.mkdir(parents=True, exist_ok=True)
+        self.images_dir.mkdir(parents=True, exist_ok=True)
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  §2  ACTION MODEL
@@ -82,17 +88,23 @@ class ActionTag(str, Enum):
     CMD    = "CMD"
     JXA    = "JXA"
     TYPE   = "TYPE"
+    MOUSE  = "MOUSE"
     VISION = "VISION"
     EVOLVE = "EVOLVE"
     USE    = "USE"
+    ASK    = "ASK"
+    WEB    = "WEB"
 
 _TAG_COLOR: dict[ActionTag, str] = {
     ActionTag.CMD:    "blue",
     ActionTag.JXA:    "white",
     ActionTag.TYPE:   "red",
+    ActionTag.MOUSE:  "magenta",
     ActionTag.VISION: "magenta",
     ActionTag.EVOLVE: "green",
     ActionTag.USE:    "yellow",
+    ActionTag.ASK:    "cyan",
+    ActionTag.WEB:    "bright_blue",
 }
 
 @dataclass
@@ -102,7 +114,7 @@ class Action:
     extra:  dict = field(default_factory=dict)
     status: str  = "⏳"
 
-_TAG_NAMES = "CMD|JXA|TYPE|VISION|EVOLVE|USE"
+_TAG_NAMES = "CMD|JXA|TYPE|MOUSE|VISION|EVOLVE|USE|ASK|WEB"
 _STRIP_RE  = re.compile(rf'\[(?:{_TAG_NAMES})\].*?\[/(?:{_TAG_NAMES})\]', re.DOTALL)
 _PATTERNS: dict[ActionTag, re.Pattern] = {
     ActionTag.VISION: re.compile(r'\[VISION\](.*?)\[/VISION\]',                  re.DOTALL),
@@ -111,13 +123,20 @@ _PATTERNS: dict[ActionTag, re.Pattern] = {
     ActionTag.CMD:    re.compile(r'\[CMD\](.*?)\[/CMD\]',                         re.DOTALL),
     ActionTag.JXA:    re.compile(r'\[JXA\](.*?)\[/JXA\]',                         re.DOTALL),
     ActionTag.TYPE:   re.compile(r'\[TYPE\](.*?)\[/TYPE\]',                       re.DOTALL),
+    ActionTag.MOUSE:  re.compile(r'\[MOUSE\](.*?)\[/MOUSE\]',                     re.DOTALL),
+    ActionTag.ASK:    re.compile(r'\[ASK\](.*?)\[/ASK\]',                         re.DOTALL),
+    ActionTag.WEB:    re.compile(r'\[WEB\](.*?)\[/WEB\]',                         re.DOTALL),
 }
 
 def parse_actions(text: str) -> tuple[str, list[Action]]:
     clean = _STRIP_RE.sub("", text).strip()
+    # Markdown kod blokları içerisindeki aksiyon etiketlerini görmezden gelmek için
+    code_block_re = re.compile(r'```.*?```', re.DOTALL)
+    search_text = code_block_re.sub("", text)
+    
     found: list[tuple[int, Action]] = []
     for tag, pat in _PATTERNS.items():
-        for m in pat.finditer(text):
+        for m in pat.finditer(search_text):
             g = m.groups()
             if   tag == ActionTag.EVOLVE: act = Action(tag, g[0].strip(), {"code": g[1].strip()})
             elif tag == ActionTag.USE:    act = Action(tag, f"{g[0].strip()}.{g[1].strip()}", {"args": g[2]})
@@ -126,11 +145,27 @@ def parse_actions(text: str) -> tuple[str, list[Action]]:
     found.sort(key=lambda x: x[0])
     return clean, [a for _, a in found]
 
-# ═════════════════════════════════════════════════════════════════════════════
 #  §3  UTILITIES
 # ═════════════════════════════════════════════════════════════════════════════
 def rough_tokens(text: str) -> int:
     return max(1, len(text.encode("utf-8")) // 4)
+
+def _save_base64_to_disk(b64_url: str, cfg: Config) -> str:
+    """Base64 URL'sini alır, diske kaydeder ve UI'ın görebileceği /images/... yolunu döner."""
+    if not b64_url.startswith("data:image"):
+        return b64_url
+    try:
+        header, encoded = b64_url.split(",", 1)
+        ext = "png"
+        if "jpeg" in header or "jpg" in header: ext = "jpeg"
+        elif "webp" in header: ext = "webp"
+        
+        file_name = f"img_{uuid.uuid4().hex[:12]}.{ext}"
+        file_path = cfg.images_dir / file_name
+        file_path.write_bytes(base64.b64decode(encoded))
+        return f"/images/{file_name}"
+    except Exception:
+        return b64_url
 
 def _content_str(content: Any) -> str:
     if isinstance(content, str):
@@ -145,35 +180,273 @@ def _content_str(content: Any) -> str:
 class SessionManager:
     def __init__(self, cfg: Config) -> None:
         self.dir = cfg.sessions_dir
+        self.db_path = cfg.sessions_dir.parent / "krocks.db"
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
 
-    def save(self, history: list[dict], name: str | None = None) -> Path:
-        stem = name or f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        stem = re.sub(r'[^\w\-]', '_', stem)[:64]
-        p    = self.dir / f"{stem}.json"
-        p.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
-        return p
+    def _init_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS conversations (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS messages (
+                    id TEXT PRIMARY KEY,
+                    conversation_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (conversation_id) REFERENCES conversations (id) ON DELETE CASCADE
+                )
+            ''')
 
-    def load(self, stem: str) -> list[dict]:
-        p = self.dir / f"{stem}.json"
-        if not p.exists():
-            raise FileNotFoundError(f"Oturum bulunamadı: {stem}")
+    def create_conversation(self, title: str) -> str:
+        conv_id = str(uuid.uuid4())
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO conversations (id, title) VALUES (?, ?)", (conv_id, title))
+        return conv_id
+
+    def add_message(self, conv_id: str, role: str, content: Any) -> None:
+        msg_id = str(uuid.uuid4())
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO messages (id, conversation_id, role, content) VALUES (?, ?, ?, ?)",
+                (msg_id, conv_id, role, json.dumps(content, ensure_ascii=False))
+            )
+            conn.execute("UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", (conv_id,))
+
+    def update_title(self, conv_id: str, title: str) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE conversations SET title = ? WHERE id = ?", (title, conv_id))
+
+    def get_title(self, conv_id: str) -> str | None:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT title FROM conversations WHERE id = ?", (conv_id,))
+            row = cursor.fetchone()
+            return row[0] if row else None
+
+    def save(self, history: list[dict], name: str | None = None) -> str:
+        # Legacy compatibility method, returns conversation_id instead of Path
+        # In the new system, web will use incremental saves, but for CLI we can dump the whole list
+        conv_id = str(uuid.uuid4())
+        title = name or f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO conversations (id, title) VALUES (?, ?)", (conv_id, title))
+            for msg in history:
+                msg_id = str(uuid.uuid4())
+                conn.execute(
+                    "INSERT INTO messages (id, conversation_id, role, content) VALUES (?, ?, ?, ?)",
+                    (msg_id, conv_id, msg.get("role", "user"), json.dumps(msg.get("content", ""), ensure_ascii=False))
+                )
+        return conv_id
+
+    def load(self, conv_id: str) -> list[dict]:
+        history = []
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at ASC",
+                (conv_id,)
+            )
+            for row in cursor:
+                role, content_str = row
+                try:
+                    content = json.loads(content_str)
+                except:
+                    content = content_str
+                history.append({"role": role, "content": content})
+        
+        if not history:
+            raise FileNotFoundError(f"Oturum bulunamadı: {conv_id}")
+        return history
+
+    def list_sessions(self) -> list[dict]:
+        sessions = []
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT id, title, updated_at FROM conversations ORDER BY updated_at DESC")
+            for row in cursor:
+                # updated_at is a string like '2023-10-25 10:20:30'
+                sessions.append({"id": row[0], "name": row[1], "updated_at": row[2]})
+        return sessions
+
+    def delete(self, conv_id: str) -> bool:
+        # Silmeden önce resimleri temizle
         try:
-            return json.loads(p.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Oturum dosyası bozuk ({stem}): {e}") from e
+            history = self.load(conv_id)
+            for msg in history:
+                if isinstance(msg.get("content"), list):
+                    for item in msg["content"]:
+                        if isinstance(item, dict) and item.get("type") == "image_url":
+                            url = item.get("image_url", {}).get("url", "")
+                            if url.startswith("/images/"):
+                                file_name = url.split("/")[-1]
+                                img_path = self.dir.parent / "images" / file_name
+                                if img_path.exists():
+                                    img_path.unlink()
+        except Exception:
+            pass
 
-    def list_sessions(self) -> list[str]:
-        return sorted(p.stem for p in self.dir.glob("*.json"))
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("PRAGMA foreign_keys = ON")
+            cursor = conn.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
+            return cursor.rowcount > 0
 
-    def auto_name(self, history: list[dict]) -> str:
+
+    async def auto_name(self, history: list[dict], client) -> str:
+        import re as _re
         for msg in history:
             if msg.get("role") == "user":
-                text = _content_str(msg["content"])[:40]
-                slug = re.sub(r'\s+', '_', text.strip())
-                slug = re.sub(r'[^\w\-]', '', slug)
-                ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
-                return f"{slug}_{ts}" if slug else f"session_{ts}"
+                raw = _content_str(msg["content"])
+                # Strip reasoning blocks and internal tags so they don't pollute the name
+                clean = _re.sub(r'```reasoning[\s\S]*?```', '', raw)
+                clean = _re.sub(r'\[(CMD|JXA|TYPE|MOUSE|VISION|EVOLVE|USE|ASK|WEB)\][\s\S]*?(?:\[/\1\]|$)', '', clean)
+                clean = clean.strip()[:500]
+                if not clean:
+                    continue
+                prompt = f"Generate a short 2-4 word title for this conversation based on the user's first message. Reply with ONLY the title, no punctuation, no explanation:\n\n{clean}"
+                try:
+                    title = ""
+                    async for chunk in client.stream([{"role": "user", "content": prompt}]):
+                        title += chunk
+                    # Strip any reasoning blocks the model might emit
+                    title = _re.sub(r'```reasoning[\s\S]*?```', '', title)
+                    slug = _re.sub(r'[^\w\s\-]', '', title.strip())
+                    slug = _re.sub(r'\s+', ' ', slug).strip()[:50]
+                    if slug:
+                        return slug
+                except Exception:
+                    break
         return f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+class ProjectManager:
+    def __init__(self, cfg: Config) -> None:
+        self.db_path = cfg.sessions_dir.parent / "krocks.db"
+        self.legacy_file = cfg.sessions_dir.parent / "projects.json"
+        self._init_db()
+        self._migrate_legacy_data()
+
+    def _init_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS projects (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    instructions TEXT,
+                    files TEXT,
+                    sessions TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+    def _migrate_legacy_data(self):
+        if self.legacy_file.exists():
+            try:
+                data = json.loads(self.legacy_file.read_text(encoding="utf-8")).get("projects", [])
+                with sqlite3.connect(self.db_path) as conn:
+                    for p in data:
+                        # Tabloda var mı kontrol et
+                        cursor = conn.execute("SELECT 1 FROM projects WHERE id = ?", (p.get("id"),))
+                        if not cursor.fetchone():
+                            conn.execute('''
+                                INSERT INTO projects (id, name, description, instructions, files, sessions, updated_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                            ''', (
+                                p.get("id"), p.get("name"), p.get("description", ""), 
+                                p.get("instructions", ""), json.dumps(p.get("files", []), ensure_ascii=False),
+                                json.dumps(p.get("sessions", []), ensure_ascii=False), p.get("updated_at", datetime.now().isoformat())
+                            ))
+                # Rename the file to mark as migrated
+                backup_path = self.legacy_file.parent / "projects_backup.json"
+                if not backup_path.exists():
+                    os.rename(self.legacy_file, backup_path)
+                else:
+                    os.remove(self.legacy_file)
+            except Exception:
+                pass
+
+    def list_projects(self) -> list[dict]:
+        projects = []
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("SELECT * FROM projects ORDER BY updated_at DESC")
+            for row in cursor:
+                projects.append({
+                    "id": row["id"],
+                    "name": row["name"],
+                    "description": row["description"],
+                    "instructions": row["instructions"],
+                    "files": json.loads(row["files"]) if row["files"] else [],
+                    "sessions": json.loads(row["sessions"]) if row["sessions"] else [],
+                    "updated_at": row["updated_at"]
+                })
+        return projects
+
+    def create(self, name: str, description: str = "") -> dict:
+        proj_id = f"proj_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        now = datetime.now().isoformat()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('''
+                INSERT INTO projects (id, name, description, instructions, files, sessions, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (proj_id, name, description, "", "[]", "[]", now))
+        
+        return {
+            "id": proj_id,
+            "name": name,
+            "description": description,
+            "instructions": "",
+            "files": [],
+            "sessions": [],
+            "updated_at": now
+        }
+
+    def get(self, proj_id: str) -> dict | None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("SELECT * FROM projects WHERE id = ?", (proj_id,))
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "description": row["description"],
+                    "instructions": row["instructions"],
+                    "files": json.loads(row["files"]) if row["files"] else [],
+                    "sessions": json.loads(row["sessions"]) if row["sessions"] else [],
+                    "updated_at": row["updated_at"]
+                }
+        return None
+
+    def update(self, proj_id: str, updates: dict) -> dict | None:
+        p = self.get(proj_id)
+        if not p: return None
+        
+        merged = {**p, **updates, "updated_at": datetime.now().isoformat()}
+        
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('''
+                UPDATE projects 
+                SET name = ?, description = ?, instructions = ?, files = ?, sessions = ?, updated_at = ?
+                WHERE id = ?
+            ''', (
+                merged["name"], merged["description"], merged["instructions"],
+                json.dumps(merged["files"], ensure_ascii=False),
+                json.dumps(merged["sessions"], ensure_ascii=False),
+                merged["updated_at"], proj_id
+            ))
+            
+        return merged
+
+    def delete(self, proj_id: str) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("DELETE FROM projects WHERE id = ?", (proj_id,))
+            return cursor.rowcount > 0
+
 
 class HistoryManager:
     def __init__(self, cfg: Config) -> None:
@@ -201,9 +474,41 @@ class APIClient:
         }
 
     async def stream(self, messages: list[dict]) -> AsyncGenerator[str, None]:
+        # Reset reasoning-block state at the start of every stream call
+        self._in_reasoning = False
+        # Intercept local images and convert them to base64 for the API
+        processed_messages = []
+        for msg in messages:
+            if not isinstance(msg.get("content"), list):
+                processed_messages.append(msg)
+                continue
+            
+            new_content = []
+            for item in msg["content"]:
+                if item.get("type") == "image_url" and isinstance(item.get("image_url"), dict):
+                    url = item["image_url"].get("url", "")
+                    if url.startswith("/images/"):
+                        file_name = url.split("/")[-1]
+                        filepath = self.cfg.images_dir / file_name
+                        if filepath.exists():
+                            # Sadece API'ye giderken anlık olarak base64'e çeviriyoruz
+                            try:
+                                mime_type, _ = mimetypes.guess_type(filepath)
+                                if not mime_type: mime_type = "image/png"
+                                b64_data = base64.b64encode(filepath.read_bytes()).decode("utf-8")
+                                new_content.append({
+                                    "type": "image_url",
+                                    "image_url": {"url": f"data:{mime_type};base64,{b64_data}"}
+                                })
+                                continue
+                            except Exception:
+                                pass
+                new_content.append(item)
+            processed_messages.append({"role": msg["role"], "content": new_content})
+
         payload = {
             "model":       self.cfg.model_id,
-            "messages":    messages,
+            "messages":    processed_messages,
             "stream":      True,
             "max_tokens":  self.cfg.max_tokens,
             "temperature": self.cfg.temperature,
@@ -223,14 +528,32 @@ class APIClient:
                                 continue
                             raw = line[6:].strip()
                             if raw == "[DONE]":
+                                if getattr(self, "_in_reasoning", False):
+                                    self._in_reasoning = False
+                                    yield "\n```\n\n"
                                 return
                             try:
-                                delta = json.loads(raw)["choices"][0]["delta"].get("content") or ""
-                                if delta:
-                                    yield delta
+                                d = json.loads(raw)["choices"][0]["delta"]
+                                r_content = d.get("reasoning_content") or d.get("reasoning") or ""
+                                content = d.get("content") or ""
+                                
+                                if r_content:
+                                    if not getattr(self, "_in_reasoning", False):
+                                        self._in_reasoning = True
+                                        yield '```reasoning\n'
+                                    yield r_content
+                                    
+                                if content:
+                                    if getattr(self, "_in_reasoning", False):
+                                        self._in_reasoning = False
+                                        yield "\n```\n\n"
+                                    yield content
                             except (json.JSONDecodeError, KeyError, IndexError):
                                 if self.cfg.debug:
                                     console.print(f"[dim red]SSE parse skip: {raw[:80]}[/]")
+                if getattr(self, "_in_reasoning", False):
+                    self._in_reasoning = False
+                    yield "\n```\n\n"
                 return
 
             except httpx.HTTPStatusError as exc:
@@ -245,7 +568,12 @@ class APIClient:
                     console.print(f"[yellow]⟳ Rate-limit ({attempt+1}/{self.cfg.retry_max}) — {wait:.1f}s[/]")
                     await asyncio.sleep(wait)
                     continue
-                raise RuntimeError(f"HTTP {code}: {exc.response.text[:200]}") from exc
+                try:
+                    await exc.response.aread()
+                    error_text = exc.response.text[:200]
+                except Exception:
+                    error_text = "Hata detayı okunamadı"
+                raise RuntimeError(f"HTTP {code}: {error_text}") from exc
 
             except (httpx.NetworkError, httpx.TimeoutException) as exc:
                 last_exc = exc
@@ -356,14 +684,20 @@ Aksiyon formatları (yalnızca gerektiğinde kullan):
 [JXA] jxa_kodu [/JXA]                       — Native macOS API manipüle et
 [TYPE] metin [/TYPE]                         — Donanımsal tuş vuruşu
 [VISION] soru [/VISION]                      — Ekranı tara ve analiz et
+[WEB] url_veya_sorgu [/WEB]                 — Web'de ara veya sayfayı oku
 [EVOLVE] yetenek ||| python_kodu [/EVOLVE]  — Kalıcı modül yaz / öğren
 [USE] yetenek ||| fonksiyon ||| args [/USE] — Öğrenilen yeteneği çalıştır
 
-DIKKAT: Çalıştırdığın komutların çıktıları sana "[SİSTEM OTOMATİK GERİ BİLDİRİMİ]" 
-başlığıyla, toplu halde dönecektir. Eğer gönderilen bu sistem çıktıları sonucunda 
-hedefine/cevaba ulaştıysan SAKIN yeni bir komut veya aksiyon üretme! Görevi bitir ve
-sadece kullanıcıya nihai cevabı/özeti söyleyerek dur. ASLA Markdown (```) kod blokları 
-içinde komut verme, sadece köşeli parantezli tagleri kullan.
+KESİN KURALLAR — İHLAL ETME:
+1. Komut çıktıları "[SİSTEM OTOMATİK GERİ BİLDİRİMİ]" başlığıyla gelir. Bu çıktıyı
+   aldıktan sonra HEDEFİNE ULAŞTIYSAN SAKIN yeni komut üretme. Cevabı ver ve dur.
+2. Bir komutun çıktısı "dizin bulunamadı", "yok", "erişim hatası" veya benzeri bir
+   hata veriyorsa AYNI veya BENZER komutu farklı path ile tekrar deneme. Kullanıcıya
+   hatayı açıkla ve dur.
+3. ASLA `ls`, `find`, `pwd`, `whoami` gibi keşif komutlarını birden fazla kez
+   art arda çalıştırma. İlk çıktı yeterliyse devam komut üretme.
+4. ASLA Markdown (```) kod blokları içinde komut verme — sadece köşeli parantezli
+   tagleri kullan.
 """
 
 _HOTKEYS: dict[str, str] = {
@@ -393,11 +727,14 @@ class KrocksApexAgent:
         self.voice         = voice_mode
         self.api           = APIClient(self.cfg)
         self.sessions      = SessionManager(self.cfg)
+        self.projects      = ProjectManager(self.cfg)
         self.render        = Renderer()
         self._hist         = HistoryManager(self.cfg)
         self.history: list[dict]            = [{"role": "system", "content": _SYSTEM_PROMPT}]
         self._tts_tasks: set[asyncio.Task]  = set() 
         self._fb_seen:   list[str]          = []      
+        self.active_workspace: str | None   = None
+        self._gen: int = 0
 
         if _MODULES_OK:
             self.interpreter = KrocksInterpreter()
@@ -425,6 +762,12 @@ class KrocksApexAgent:
                 pass
 
     def _push(self, role: str, content: Any) -> None:
+        # Aynı kullanıcı mesajı art arda 2 kez pushlanırsa ikinciyi yoksay
+        if role == "user" and self.history and self.history[-1]["role"] == "user":
+            prev_content = self.history[-1].get("content", "")
+            if isinstance(content, str) and isinstance(prev_content, str):
+                if content == prev_content:
+                    return  # Duplicate — ignore
         if (self.history
                 and self.history[-1]["role"] == role
                 and role != "system"):
@@ -432,10 +775,31 @@ class KrocksApexAgent:
                 self.history[-1]["content"] += "\n" + content
                 return
 
+        # Gelen content içinde base64 resimler varsa onları fiziksel dosyaya kaydet
+        if isinstance(content, list):
+            new_content = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "image_url":
+                    url = item.get("image_url", {}).get("url", "")
+                    if url.startswith("data:image"):
+                        local_path = _save_base64_to_disk(url, self.cfg)
+                        new_content.append({"type": "image_url", "image_url": {"url": local_path}})
+                    else:
+                        new_content.append(item)
+                else:
+                    new_content.append(item)
+            content = new_content
+
         self.history.append({"role": role, "content": content})
 
         if len(self.history) > self.cfg.history_max:
             keep = max(2, self.cfg.history_max // 2)
+            # Trim'den önce düşecek mesajlardaki image blob'larını serbest bırak
+            # (Sadece user mesajlarında images var, onlar büyük base64 içerir)
+            for i in range(1, len(self.history) - keep):
+                if "images" in self.history[i] and self.history[i]["images"]:
+                    self.history[i]["images"] = None
+                    self.history[i]["content"] = "[eski görsel budandı]"
             self.history = [self.history[0]] + self.history[-keep:]
             if len(self.history) > 1 and self.history[1]["role"] == "assistant":
                 self.history.insert(1, {"role": "user", "content": "[Geçmiş kırpıldı]"})
@@ -493,8 +857,7 @@ class KrocksApexAgent:
                 console.print("[red]✖ Hafıza modülü yüklenemedi.[/]")
                 return True
             try:
-                self.indexer.cursor.execute("SELECT category, key_name, value_data, last_updated FROM system_knowledge")
-                rows = self.indexer.cursor.fetchall()
+                rows = self.indexer.get_all_memory()
                 
                 if not rows:
                     console.print("[yellow]🧠 Krock's hafızası boş. Henüz bir şey öğrenilmedi.[/]")
@@ -585,7 +948,25 @@ class KrocksApexAgent:
             console.print(f"[green]✔ Model değiştirildi:[/] {esc(self.cfg.model_id)}")
             return True
 
-        if cmd == "!config":
+        if cmd.startswith("!config"):
+            parts = cmd.split(None, 3)
+            if len(parts) >= 3 and parts[1] == "set":
+                key = parts[2]
+                val = parts[3] if len(parts) > 3 else ""
+                if hasattr(self.cfg, key):
+                    current_type = type(getattr(self.cfg, key))
+                    try:
+                        if current_type == bool:
+                            new_val = val.lower() in ("true", "1", "yes", "on")
+                        else:
+                            new_val = current_type(val)
+                        setattr(self.cfg, key, new_val)
+                        console.print(f"[green]✔ Config güncellendi:[/] {key} = {new_val}")
+                    except Exception as e:
+                        console.print(f"[red]✖ Geçersiz değer tipi:[/] {e}")
+                else:
+                    console.print(f"[red]✖ Bilinmeyen config anahtarı:[/] {key}")
+                return True
             t = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
             t.add_column(style="cyan", no_wrap=True)
             t.add_column()
@@ -598,6 +979,10 @@ class KrocksApexAgent:
                 ("retry_max",      str(self.cfg.retry_max)),
                 ("tts_timeout",    str(self.cfg.tts_timeout)),
                 ("debug",          str(self.cfg.debug)),
+                ("enable_mouse",   str(self.cfg.enable_mouse)),
+                ("enable_multi_monitor", str(self.cfg.enable_multi_monitor)),
+                ("enable_file_upload", str(self.cfg.enable_file_upload)),
+                ("enable_vision",  str(self.cfg.enable_vision)),
             ]:
                 t.add_row(name, esc(str(val)))
             console.print(t)
@@ -617,6 +1002,7 @@ class KrocksApexAgent:
         if cmd == "!reset":
             self.history  = [self.history[0]]
             self._fb_seen.clear()
+            self._gen += 1
             console.print("[yellow]Sohbet sıfırlandı (sistem prompt korundu).[/]")
             return True
 
@@ -640,23 +1026,42 @@ class KrocksApexAgent:
 
         try:
             if action.tag == ActionTag.CMD:
-                out = await self.interpreter.execute_shell_async(action.data)
-                body = out.strip()[-800:] if out and out.strip() else "(çıktı yok)"
+                out = await self.interpreter.execute_shell_async(action.data, cwd=self.active_workspace)
+                out_str = out.strip() if out else ""
+                if not out_str:
+                    body = "(çıktı yok)"
+                elif len(out_str) > 20000:
+                    body = out_str[:10000] + "\n\n...[ÇIKTI ÇOK UZUNDU, ORTASI KESİLDİ]...\n\n" + out_str[-10000:]
+                else:
+                    body = out_str
                 return f"CMD ▶ {action.data[:60]}\n{body}"
 
             if action.tag == ActionTag.JXA:
-                out = self.bridge.run_jxa_native(action.data)
+                out = await asyncio.to_thread(self.bridge.run_jxa_native, action.data)
                 body = out.strip() if out and out.strip() else "(çıktı yok)"
                 return f"JXA ▶ {body}"
 
             if action.tag == ActionTag.TYPE:
-                self.ui.hardware_keystroke(action.data)
+                safe_data = action.data.replace('"', '\\"')
+                self.ui.hardware_keystroke(safe_data)
+                return None
+
+            if action.tag == ActionTag.MOUSE:
+                if not self.cfg.enable_mouse:
+                    return "Hata: Fare (MOUSE) kontrolü config üzerinden devre dışı bırakılmış. Lütfen '!config set enable_mouse true' ile aktif edin."
+                self.ui.hardware_mouse_action(action.data)
                 return None
 
             if action.tag == ActionTag.VISION:
-                b64 = self.vision.take_snapshot()
-                return ({"__vision__": action.data, "__img__": b64}
-                        if "Hata" not in b64 else f"Görüş hatası: {b64}")
+                if not self.cfg.enable_vision:
+                    return "Hata: Görüş (VISION) özelliği config üzerinden devre dışı bırakılmış."
+                b64_list = self.vision.take_snapshot(multi_monitor=self.cfg.enable_multi_monitor)
+                if not b64_list:
+                    return "Görüş hatası: Ekran yakalanamadı veya boş."
+                if isinstance(b64_list, str):
+                    if "Hata" in b64_list: return f"Görüş hatası: {b64_list}"
+                    b64_list = [b64_list]
+                return {"__vision__": action.data, "__img_list__": b64_list}
 
             if action.tag == ActionTag.EVOLVE:
                 res = self.evolution.write_and_learn_skill(action.data, action.extra.get("code", ""))
@@ -667,6 +1072,17 @@ class KrocksApexAgent:
                 args  = [a.strip() for a in action.extra.get("args", "").split(",") if a.strip()]
                 res   = self.evolution.execute_skill(*parts, *args)
                 return f"USE ▶ {action.data}: {res}"
+
+            if action.tag == ActionTag.ASK:
+                return None # The frontend will handle this by showing a modal to the user
+
+            if action.tag == ActionTag.WEB:
+                from krocks_web_engine import UltraWebEngine
+                query = action.data.strip()
+                if query.startswith("http://") or query.startswith("https://"):
+                    return f"WEB(Fetch) ▶\n{UltraWebEngine.fetch(query)}"
+                else:
+                    return f"WEB(Search) ▶\n{UltraWebEngine.search(query)}"
 
         except Exception:
             tb = traceback.format_exc(limit=4)
@@ -683,13 +1099,6 @@ class KrocksApexAgent:
         depth: int = 0,
     ) -> None:
 
-        if depth > self.cfg.feedback_depth:
-            console.print(
-                "[dim yellow]⚠ Maksimum geri bildirim derinliğine ulaşıldı "
-                f"({self.cfg.feedback_depth}) — döngü durduruldu.[/]"
-            )
-            return
-
         if not self.cfg.api_key:
             console.print(
                 "[red]✖ API anahtarı ayarlanmamış![/]\n"
@@ -697,11 +1106,14 @@ class KrocksApexAgent:
             )
             return
 
-        content: Any = (
-            [{"type": "text",      "text": prompt},
-             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}}]
-            if img_b64 else prompt
-        )
+        content_items = [{"type": "text", "text": prompt}]
+        if isinstance(img_b64, list):
+            for b64 in img_b64:
+                content_items.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
+        elif img_b64:
+            content_items.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}})
+            
+        content: Any = content_items if len(content_items) > 1 else prompt
         history_len_before = len(self.history)
         self._push("user", content)
 
@@ -782,14 +1194,21 @@ class KrocksApexAgent:
         for fb in feedbacks:
             if isinstance(fb, dict) and "__vision__" in fb:
                 await self._turn(
-                    f"Ekran analizi: {fb['__vision__']}", fb["__img__"], depth=depth + 1
+                    f"Ekran analizi: {fb['__vision__']}", fb.get("__img_list__") or fb.get("__img__"), depth=depth + 1
                 )
             elif isinstance(fb, str) and fb.strip():
-                if self._seen_feedback(fb):
+                # CMD çıktısını normalize ederek döngü tespiti yap
+                fb_key = " ".join(fb.split())[:200]
+                if self._seen_feedback(fb_key):
                     if self.cfg.debug:
                         console.print("[dim]Tekrarlayan geri bildirim — atlandı.[/]")
                     continue
-                await self._turn(fb, depth=depth + 1)
+                await self._turn(
+                    f"[SİSTEM OTOMATİK GERİ BİLDİRİMİ]\n{fb}\n\n"
+                    "NOT: Bu çıktıya dayanarak hedefine ulaştıysan yeni komut üretme, "
+                    "sadece kullanıcıya nihai cevabı ver.",
+                    depth=depth + 1
+                )
 
     async def run(self) -> None:
         print("\033[H\033[J", end="")

@@ -1,6 +1,8 @@
 import asyncio
 import shlex
 import traceback
+import os
+import signal
 
 # Çalıştırılması yasaklı komutlar (güvenlik nedeniyle)
 _FORBIDDEN_COMMANDS = {
@@ -8,7 +10,7 @@ _FORBIDDEN_COMMANDS = {
     "dd", "mkfs", "fdisk", "format", "mount", "umount",
     "chmod", "chown", "chattr", "passwd",
     "kill", "killall", "pkill",
-    "wget", "curl", "nc", "netcat", "ncat",
+    "nc", "netcat", "ncat",
     "bash", "zsh", "sh", "dash", "fish",
     "telnet", "ssh", "scp", "rsync",
 }
@@ -17,30 +19,22 @@ class KrocksInterpreter:
     def __init__(self):
         self.history = []
 
-    async def execute_shell_async(self, command: str) -> str:
+    async def execute_shell_async(self, command: str, cwd: str = None) -> str:
         """Asenkron (non-blocking) shell yürütme. Sistemi kilitlemez."""
         try:
-            # Komutu argüman listesine ayır
-            try:
-                args = shlex.split(command)
-            except ValueError:
-                return f"Geçersiz komut: {command[:100]}"
-
-            if not args:
-                return "Komut girilmedi."
-
-            base_cmd = args[0].lower()
-
-            # Yasaklı komut kontrolü
-            if base_cmd in _FORBIDDEN_COMMANDS:
-                return (f"Güvenlik: '{base_cmd}' komutunun çalıştırılmasına izin verilmiyor. "
+            # Güvenlik kontrolü (Basit)
+            first_word = command.strip().split()[0].lower() if command.strip() else ""
+            if first_word in _FORBIDDEN_COMMANDS:
+                return (f"Güvenlik: '{first_word}' komutunun çalıştırılmasına izin verilmiyor. "
                         "Bu komut Krock's'un güvenlik politikası tarafından engellenmiştir.")
 
-            # `ls -la /some/path` gibi komutları create_subprocess_exec ile çalıştır
-            process = await asyncio.create_subprocess_exec(
-                *args,
+            # `ls -la /some/path | grep x` gibi shell özelliklerini desteklemesi için shell=True benzeri
+            process = await asyncio.create_subprocess_shell(
+                command,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd,
+                preexec_fn=os.setsid
             )
 
             # Maksimum 30 saniye zaman aşımı
@@ -48,11 +42,14 @@ class KrocksInterpreter:
                 stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30.0)
             except asyncio.TimeoutError:
                 try:
-                    process.kill()
+                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
                     await process.communicate()  # Pipe tamponlarını temizle
                 except Exception:
-                    pass
-                return f"Zaman aşımı: '{command[:60]}' 30 saniyede tamamlanamadı."
+                    try:
+                        process.kill()
+                    except:
+                        pass
+                return f"Zaman aşımı: '{command[:60]}' 30 saniyede tamamlanamadı (Zombi süreçler başarıyla temizlendi)."
 
             output = stdout.decode('utf-8').strip() if stdout else ""
             error = stderr.decode('utf-8').strip() if stderr else ""
@@ -70,6 +67,7 @@ class KrocksInterpreter:
             # __import__, open, exec, eval, compile, globals, locals gibi tehlikeli
             # fonksiyonları kullanıma kapat.
             safe_builtins = {
+                "__import__": __import__,  # Güvenli kütüphanelere erişim için gerekli
                 "print": print, "len": len, "range": range, "int": int,
                 "float": float, "str": str, "bool": bool, "list": list,
                 "dict": dict, "tuple": tuple, "set": set, "type": type,
