@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=krock2" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Krock's Apex</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400..600;1,6..72,400..600&display=swap" rel="stylesheet">
+    <script type="module" crossorigin src="/assets/index-6v1szKcC.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-ojG2lvwh.css">
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      window.addEventListener('error', function(e) {
+        document.body.innerHTML += '<div style="color:red; background:black; position:fixed; top:0; left:0; z-index:9999; width:100%; height:100%; padding:20px; font-size:16px; font-family:monospace; white-space:pre-wrap;">GLOBAL ERROR: ' + (e.message || '') + '\n\n' + (e.error ? e.error.stack : '') + '</div>';
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        document.body.innerHTML += '<div style="color:red; background:black; position:fixed; top:0; left:0; z-index:9999; width:100%; height:100%; padding:20px; font-size:16px; font-family:monospace; white-space:pre-wrap;">PROMISE REJECTION: ' + (e.reason ? e.reason.stack || e.reason : 'Unknown') + '</div>';
+      });
+    </script>
+  </body>
+</html>
