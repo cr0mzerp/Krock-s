@@ -1,0 +1,48 @@
+{
+  "version": "1.0",
+  "updated": "2026-06-06",
+  "plugins": [
+    {
+      "name": "web-search",
+      "version": "1.0",
+      "author": "Krock's Team",
+      "category": "Web",
+      "description": "DuckDuckGo HTML üzerinden gizlilik dostu web araması yapar."
+    },
+    {
+      "name": "code-review",
+      "version": "1.0",
+      "author": "Krock's Team",
+      "category": "Code",
+      "description": "Python kodunda syntax, import ve en iyi pratik kontrolü yapar."
+    },
+    {
+      "name": "sql-helper",
+      "version": "1.0",
+      "author": "Krock's Team",
+      "category": "Code",
+      "description": "Güvenli parametrik SQL sorguları üretir (SQLite/Postgres)."
+    },
+    {
+      "name": "pdf-summarizer",
+      "version": "0.9",
+      "author": "Krock's Team",
+      "category": "Docs",
+      "description": "PDF dosyalarını okur ve LLM'e özetletmek için hazırlar (pypdf gerekir)."
+    },
+    {
+      "name": "image-describer",
+      "version": "1.0",
+      "author": "Krock's Team",
+      "category": "Vision",
+      "description": "Krock's OmniVision'ı sarmalayan basit caption fonksiyonu."
+    },
+    {
+      "name": "git-helper",
+      "version": "1.0",
+      "author": "Krock's Team",
+      "category": "Dev",
+      "description": "Sık kullanılan git komutlarını sarar (commit, branch, log)."
+    }
+  ]
+}
