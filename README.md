@@ -8,7 +8,7 @@ Krock's Apex is not a wrapper — it's a modular, streaming, context-aware agent
 
 ---
 
-## Table of Contents
+## Table of Contents. Higly RECOMMENDED REACT Website!
 
 1. [Core Philosophy](#core-philosophy)
 2. [System Architecture](#system-architecture)
