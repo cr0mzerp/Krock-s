@@ -102,6 +102,7 @@ export default function Home() {
   const messages   = activeView === 'code' ? codeMessages : activeView === 'projects' ? projectMessages : chatMessages;
   const isStreaming = activeView === 'code' ? codeIsStreaming : activeView === 'projects' ? projectIsStreaming : chatIsStreaming;
   const streamingViewRef = useRef('chat');
+  const viewsNeedReset = useRef({ chat: true, code: true, projects: true });
   const getViewSetters = (key) => {
     if (key === 'code') return { msgs: setCodeMessages, stream: setCodeIsStreaming };
     if (key === 'projects') return { msgs: setProjectMessages, stream: setProjectIsStreaming };
@@ -457,6 +458,11 @@ Teknik, profesyonel ve İngilizce ağırlıklı dil kullan. Kodları eksiksiz ve
     const { msgs: msgSetter, stream: streamSetter } = getViewSetters(viewKey);
     streamingViewRef.current = viewKey;
 
+    if (viewsNeedReset.current[viewKey]) {
+      viewsNeedReset.current[viewKey] = false;
+      ws.resetChat();
+    }
+
     msgSetter(prev => {
       const next = [
         ...prev,
@@ -553,6 +559,7 @@ Teknik, profesyonel ve İngilizce ağırlıklı dil kullan. Kodları eksiksiz ve
     setSidebarOpen(true);
     let viewKey = activeView === 'code' ? 'code' : activeView === 'projects' ? 'projects' : 'chat';
     autosaveState.current[viewKey] = { saved: false, count: 0, name: null };
+    viewsNeedReset.current[viewKey] = true;
     if (activeView === 'code') { setCodeMessages([]); setCodeIsStreaming(false); }
     else if (activeView === 'projects') { setProjectMessages([]); setProjectIsStreaming(false); }
     else { setChatMessages([]); setChatIsStreaming(false); }
@@ -572,6 +579,7 @@ Teknik, profesyonel ve İngilizce ağırlıklı dil kullan. Kodları eksiksiz ve
     let isProjSession = (name.startsWith('Project_') || name.startsWith('Project '));
     let viewKey = isCodeSession ? 'code' : isProjSession ? 'projects' : 'chat';
     autosaveState.current[viewKey] = { saved: true, count: 0, name };
+    viewsNeedReset.current[viewKey] = false; // session yüklendi, backend zaten dolacak
     if (isCodeSession) { setCodeMessages([]); setCodeIsStreaming(false); }
     else if (isProjSession) { setProjectMessages([]); setProjectIsStreaming(false); }
     else { setChatMessages([]); setChatIsStreaming(false); }
